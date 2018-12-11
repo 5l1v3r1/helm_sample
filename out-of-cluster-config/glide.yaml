@@ -1,0 +1,20 @@
+package: helm_sample
+import:
+- package: k8s.io/client-go
+  subpackages:
+  - kubernetes
+  - rest
+  - tools/clientcmd
+- package: k8s.io/helm
+  subpackages:
+  - pkg/helm/portforwarder
+- package: github.com/BurntSushi/toml
+- package: github.com/Masterminds/semver
+- package: github.com/Masterminds/sprig
+- package: github.com/gobwas/glob
+- package: google.golang.org/grpc
+  subpackages:
+  - google.golang.org/grpc/credentials
+  - google.golang.org/grpc/health/grpc_health_v1
+  - google.golang.org/grpc/keepalive
+  - google.golang.org/grpc/metadata
