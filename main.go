@@ -6,7 +6,6 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"k8s.io/helm/pkg/helm"
 	"k8s.io/helm/pkg/helm/portforwarder"
@@ -18,86 +17,59 @@ var (
 	tillerHost   string
 )
 
-func main() {
-	err := setupConnection()
-	if err != nil {
-		log.Println(err)
-	}
-	client := newClient()
+const (
+	ReleaseName = "hoge-release"
+)
 
-	opts := []helm.DeleteOption{
+func main() {
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		log.Print("Failed to get kubernetes in cluster config %+v", err)
+		return
+	}
+	kubeClientSet, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		log.Printf("failed to construct kubernetes client set from config: %+v", err)
+		return
+	}
+
+	tillerTunnel, err := portforwarder.New("kube-system", kubeClientSet, kubeConfig)
+	if err != nil {
+		log.Print(err, "failed to portforward")
+		return
+	}
+	tillerHost = fmt.Sprintf("127.0.0.1:%d", tillerTunnel.Local)
+
+	helmOpts := []helm.Option{
+		helm.Host(tillerHost),
+		helm.ConnectTimeout(10), // デフォルトのタイムアウト値が0秒なため必須
+	}
+	helmClient := helm.NewClient(helmOpts...)
+	listOpts := []helm.ReleaseListOption{
+		helm.ReleaseListFilter(ReleaseName),
+	}
+
+	listRelease, err := helmClient.ListReleases(listOpts...)
+	if err != nil {
+		log.Print(err, "failed to get ReleaseName")
+		return
+	}
+
+	if listRelease == nil {
+		log.Printf("%s not found", ReleaseName)
+		return
+	}
+
+	deleteOpts := []helm.DeleteOption{
 		helm.DeleteDisableHooks(false),
 		helm.DeletePurge(true),
-		helm.DeleteTimeout(10),
+		helm.DeleteTimeout(10), // デフォルトのタイムアウト値が0秒なため必須
 	}
 
-	res, err := client.DeleteRelease("ringed-indri", opts...)
+	_, err = helmClient.DeleteRelease(ReleaseName, deleteOpts...)
 	if err != nil {
-		log.Print(err)
+		log.Print("failed to delete")
+		return
 	}
 
-	fmt.Printf("%+v", res)
-}
-
-func newClient() helm.Interface {
-	options := []helm.Option{
-		helm.Host(tillerHost),
-		helm.ConnectTimeout(10),
-	}
-	return helm.NewClient(options...)
-}
-
-func getKubeClient(context string, kubeconfig string) (*rest.Config, kubernetes.Interface, error) {
-	config, err := configForContext(context, kubeconfig)
-	if err != nil {
-		return nil, nil, err
-	}
-	client, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("could not get Kubernetes client: %s", err)
-	}
-	return config, client, nil
-}
-
-func configForContext(context string, kubeconfig string) (*rest.Config, error) {
-	config, err := GetConfig(context, kubeconfig).ClientConfig()
-	if err != nil {
-		return nil, fmt.Errorf("could not get Kubernetes config for context %q: %s", context, err)
-	}
-	return config, nil
-}
-
-// Port Forward
-func setupConnection() error {
-	config, client, err := getKubeClient("k8s.cluster.domain", "~/.kube/config") // change your home dir
-	if err != nil {
-		return err
-	}
-
-	tillerTunnel, err := portforwarder.New("kube-system", client, config)
-	if err != nil {
-		return err
-	}
-
-	tillerHost = fmt.Sprintf("127.0.0.1:%d", tillerTunnel.Local)
-	log.Printf("Created tunnel using local port: '%d'\n", tillerTunnel.Local)
-
-	return nil
-}
-
-func GetConfig(context string, kubeconfig string) clientcmd.ClientConfig {
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	rules.DefaultClientConfig = &clientcmd.DefaultClientConfig
-
-	overrides := &clientcmd.ConfigOverrides{ClusterDefaults: clientcmd.ClusterDefaults}
-
-	if context != "" {
-		overrides.CurrentContext = context
-	}
-
-	if kubeconfig != "" {
-		rules.ExplicitPath = kubeconfig
-	}
-
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides)
 }
